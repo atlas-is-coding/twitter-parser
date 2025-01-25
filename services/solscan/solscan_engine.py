@@ -40,9 +40,8 @@ class SolscanEngine:
         logger.info(f"Начало получения холдеров для контракта {contract_address}")
         all_holders_data = []
         current_page = 1
-        MAX_PAGE = SOLSCAN_MAX_PAGE
-        MAX_RETRIES = MAX_RETRIES
-        DELAY_BETWEEN_REQUESTS = SOLSCAN_DELAY_BETWEEN_REQUESTS
+        retry_limit = MAX_RETRIES  # Создаем локальную переменную
+        delay = SOLSCAN_DELAY_BETWEEN_REQUESTS
         
         metadata = None
         total_holders_processed = 0
@@ -50,18 +49,23 @@ class SolscanEngine:
 
         print(f"\r📊 Контракт {contract_address}: ", end='', flush=True)
 
-        while current_page < MAX_PAGE:
+        while current_page < SOLSCAN_MAX_PAGE:
             url = self.construct_search_url(contract_address, page_size, current_page)
             logger.debug(f"Запрос к Solscan API: {url}")
             
-            for attempt in range(MAX_RETRIES):
+            for attempt in range(retry_limit):
                 proxy_url = self.proxy_manager.get_proxy()
                 if not proxy_url:
                     logger.error("Не удалось получить прокси для запроса")
                     return SolscanAPI(success=True, data=all_holders_data, metadata=metadata or {})
 
                 try:
-                    response = requests.get(url, headers=self.headers, proxies={'http': proxy_url, 'https': proxy_url})
+                    response = requests.get(
+                        url, 
+                        headers=self.headers, 
+                        proxies={'http': proxy_url, 'https': proxy_url},
+                        timeout=REQUEST_TIMEOUT
+                    )
                     response.raise_for_status()
                     
                     if not response.text.strip():
@@ -76,15 +80,15 @@ class SolscanEngine:
                             config=self.config
                         )
                         
-                        # Получаем общее количество холдеров из первого ответа
                         if total_expected is None and 'total' in response_data.get('metadata', {}):
                             total_expected = response_data['metadata']['total']
                         
                     except (ValueError, requests.exceptions.JSONDecodeError) as json_error:
                         logger.error(f"Ошибка парсинга JSON: {str(json_error)}", exc_info=True)
-                        if attempt == MAX_RETRIES - 1:
+                        if attempt == retry_limit - 1:
                             logger.error(f"Превышено максимальное количество попыток парсинга JSON для контракта {contract_address}")
                             return SolscanAPI(success=True, data=all_holders_data, metadata=metadata or {})
+                        time.sleep(delay)
                         continue
                     
                     if not page_response.data:
@@ -102,20 +106,20 @@ class SolscanEngine:
                         print(f"\r📊 Контракт {contract_address}: Обработано {total_holders_processed} холдеров", end='', flush=True)
                     
                     current_page += 1
-                    time.sleep(DELAY_BETWEEN_REQUESTS)
+                    time.sleep(delay)
                     break
                     
                 except requests.exceptions.RequestException as e:
                     logger.error(f"Ошибка запроса к Solscan API: {str(e)}", exc_info=True)
                     self.proxy_manager.report_error(proxy_url)
-                    if attempt == MAX_RETRIES - 1:
+                    if attempt == retry_limit - 1:
                         logger.error(f"Превышено максимальное количество попыток запроса для контракта {contract_address}")
                         return SolscanAPI(success=True, data=all_holders_data, metadata=metadata or {})
+                    time.sleep(delay)
                     continue
                 except Exception as e:
                     logger.error(f"Неожиданная ошибка при получении холдеров: {str(e)}", exc_info=True)
                     return SolscanAPI(success=True, data=all_holders_data, metadata=metadata or {})
 
-        print(f"\r💼 Контракт {contract_address}: Собрано {total_holders_processed} холдеров")
         logger.info(f"Завершено получение холдеров для контракта {contract_address}. Всего получено: {total_holders_processed}")
         return SolscanAPI(success=True, data=all_holders_data, metadata=metadata or {})
