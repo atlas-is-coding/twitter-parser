@@ -39,13 +39,15 @@ logging.config.dictConfig({
             'filename': 'twitter_parser.log',
             'mode': 'a',
             'formatter': 'detailed',
-            'level': 'DEBUG'
+            'level': 'DEBUG',
+            'encoding': 'utf-8'
         },
         'console': {
             'class': 'logging.StreamHandler',
             'formatter': 'simple',
             'level': 'INFO',
-            'filters': ['info_and_below']
+            'filters': ['info_and_below'],
+            'stream': sys.stdout
         }
     },
     'filters': {
@@ -179,6 +181,14 @@ def process_contract_chunk(contract_addresses: list, proxy_manager: ProxyManager
     return chunk_stats
 
 def main():
+    try:
+        # Установка кодировки для stdout
+        if sys.stdout.encoding != 'utf-8':
+            sys.stdout.reconfigure(encoding='utf-8')
+    except AttributeError:
+        # Для старых версий Python
+        pass
+    
     proxy_manager = ProxyManager()
     csv_writer = CSVWriter()
     

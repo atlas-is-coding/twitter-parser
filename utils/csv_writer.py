@@ -21,51 +21,62 @@ class CSVWriter:
         return datetime.now().strftime("%Y%m%d_%H%M%S")
 
     def write_eligible_holders(self, holders: List[dict]) -> str:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f'output/eligible_{timestamp}.csv'
+        timestamp = self._get_timestamp()
+        filename = os.path.join(self.output_dir, f'eligible_{timestamp}.csv')
         
-        os.makedirs('output', exist_ok=True)
-        
-        with open(filename, 'w', newline='', encoding='utf-8') as file:
-            writer = csv.writer(file)
-            writer.writerow([
-                'Address', 'Twitter Username', 'Tweet Text', 
-                'Can DM', 'Followers Count', 'Total Balance USD'
-            ])
-            
-            for holder in holders:
+        try:
+            # Используем utf-8-sig для корректной работы с Excel в Windows
+            with open(filename, 'w', newline='', encoding='utf-8-sig', errors='replace') as file:
+                writer = csv.writer(file)
                 writer.writerow([
-                    holder['address'],
-                    holder['twitter_username'],
-                    holder['tweet_text'],
-                    holder['can_dm'],
-                    holder['followers_count'],
-                    f"${holder.get('total_balance_usd', 0):.2f}",
+                    'Address', 'Twitter Username', 'Tweet Text', 
+                    'Can DM', 'Followers Count', 'Total Balance USD'
                 ])
-        
-        return filename
+                
+                for holder in holders:
+                    # Обработка потенциально проблемных строк
+                    tweet_text = str(holder.get('tweet_text', '')).encode('utf-8', errors='replace').decode('utf-8')
+                    writer.writerow([
+                        holder.get('address', ''),
+                        holder.get('twitter_username', ''),
+                        tweet_text,
+                        holder.get('can_dm', False),
+                        holder.get('followers_count', 0),
+                        f"${holder.get('total_balance_usd', 0):.2f}",
+                    ])
+            
+            logger.info(f"✅ Успешно сохранено {len(holders)} записей в {filename}")
+            return filename
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка при записи в файл {filename}: {str(e)}", exc_info=True)
+            console.print(f"[red]Ошибка при записи в CSV:[/red] {str(e)}")
+            return None
 
     def write_not_eligible_holders(self, holders: List[Dict]):
         timestamp = self._get_timestamp()
         filename = os.path.join(self.output_dir, f"not_eligible_{timestamp}.csv")
         
-        logger.info(f"📝 Запись данных в файл: {filename}")
-        console.print(f"[cyan]Writing data to:[/cyan] {filename}")
         try:
-            with open(filename, 'w', newline='', encoding='utf-8') as f:
+            # Используем utf-8-sig для корректной работы с Excel в Windows
+            with open(filename, 'w', newline='', encoding='utf-8-sig', errors='replace') as f:
                 writer = csv.writer(f)
                 writer.writerow(['Адрес', 'Причина'])
                 for holder in holders:
+                    # Безопасное получение значений с обработкой ошибок кодировки
+                    reason = str(holder.get('reason', '')).encode('utf-8', errors='replace').decode('utf-8')
                     writer.writerow([
                         holder.get('address', ''),
-                        holder.get('reason', '')
+                        reason
                     ])
-            console.print(f"[green]Successfully written {len(holders)} records to {filename}[/green]")
+                    
             logger.info(f"✅ Успешно записано {len(holders)} строк в {filename}")
+            return filename
+            
         except Exception as e:
-            console.print(f"[red]Error writing to CSV:[/red] {str(e)}", style="bold red")
             logger.error(f"❌ Ошибка при записи в файл {filename}: {str(e)}", exc_info=True)
-            raise
+            console.print(f"[red]Ошибка при записи в CSV:[/red] {str(e)}")
+            return None
 
 def write_to_csv(data, filename):
     logger.info(f"Writing data to CSV file: {filename}")
