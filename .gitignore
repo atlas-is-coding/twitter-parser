@@ -52,7 +52,6 @@ logs/
 # Конфигурационные и временные файлы
 proxies.txt
 headers.txt
-config.py
 t.py
 
 # IDE
