@@ -48,7 +48,7 @@ Icon
 output/
 output/*.csv
 logs/
-
+parsed_headers.py
 # Конфигурационные и временные файлы
 proxies.txt
 headers.txt
