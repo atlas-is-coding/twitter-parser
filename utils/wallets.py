@@ -10,6 +10,14 @@ import json
 import logging
 from pathlib import Path
 
+from config.config import USER_CONFIG
+from config.constants import (
+    TOKEN_PROGRAM_ID, TOKENS_INFO, WALLET_CACHE_DURATION,
+    WALLET_BATCH_SIZE, WALLET_MAX_WORKERS, WALLET_RATE_LIMIT_DELAY,
+    REQUEST_TIMEOUT, MAX_RETRIES, JUPITER_TOKENS_URL,
+    COINGECKO_PRICE_URL, JUPITER_PRICE_URL, RAYDIUM_PRICE_URL
+)
+
 # Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
@@ -22,31 +30,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Константы
-SOLANA_RPC_URL = "https://mainnet.helius-rpc.com/?api-key=12891d9f-e674-4ae8-b25e-23eab3a00621"
-TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+SOLANA_RPC_URL = USER_CONFIG["SOL_RPC"]
 CACHE_FILE = Path('solana_tokens.json')
 CACHE_DURATION = 300  # 5 минут в секундах
 REQUEST_TIMEOUT = 10  # таймаут для HTTP запросов
 MAX_RETRIES = 3
 
-# Базовые токены
-TOKENS_INFO = {
-    'SOL': {'coingecko_id': 'solana'},
-    'USDC': {
-        'coingecko_id': 'usd-coin',
-        'mint': 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
-    },
-    'USDT': {
-        'coingecko_id': 'tether',
-        'mint': 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
-    },
-    'RAY': {
-        'coingecko_id': 'raydium',
-        'mint': '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R'
-    }
-}
-
-class SolanaClient:
+class BalanceChecker:
     def __init__(self, rpc_url: str = SOLANA_RPC_URL):
         self.client = Client(rpc_url)
         self._token_list: Optional[Dict[str, str]] = None
@@ -54,15 +44,13 @@ class SolanaClient:
 
     @property
     def token_list(self) -> Dict[str, str]:
-        """Получение списка токенов с кешированием"""
         current_time = time.time()
-        if not self._token_list or (current_time - self._last_token_update) > CACHE_DURATION:
+        if not self._token_list or (current_time - self._last_token_update) > WALLET_CACHE_DURATION:
             self._token_list = self._load_or_fetch_tokens()
             self._last_token_update = current_time
         return self._token_list
 
     def _load_or_fetch_tokens(self) -> Dict[str, str]:
-        """Загрузка токенов из кеша или Jupiter API"""
         try:
             if CACHE_FILE.exists() and (time.time() - CACHE_FILE.stat().st_mtime) < CACHE_DURATION:
                 with CACHE_FILE.open('r') as f:
@@ -77,7 +65,6 @@ class SolanaClient:
             return {}
 
     def _fetch_jupiter_tokens(self) -> Dict[str, str]:
-        """Получение списка токенов из Jupiter API"""
         for attempt in range(MAX_RETRIES):
             try:
                 response = requests.get("https://token.jup.ag/all", timeout=REQUEST_TIMEOUT)
@@ -133,7 +120,6 @@ class SolanaClient:
                     # Создаем обратный маппинг mint -> symbol
                     mint_to_symbol = {v: k for k, v in self.token_list.items()}
                     
-                    # Обрабатываем данные из Jupiter API v2
                     if 'data' in jupiter_data:
                         for mint, price_data in jupiter_data['data'].items():
                             if price_data and mint in mint_to_symbol:
@@ -180,19 +166,16 @@ class SolanaClient:
     def get_wallet_balance(self, wallet_address: str) -> Tuple[Dict[str, float], Dict[str, float]]:
         try:
             balances = self._get_wallet_tokens(wallet_address)
-            print(f"DEBUG: Полученные балансы: {balances}")  # Для отладки
             
             # Получаем цены для всех найденных токенов
             prices = self.get_token_prices(list(balances.keys()))
-            print(f"DEBUG: Полученные цены: {prices}")  # Для отладки
             
             usd_values = {}
             for token, balance in balances.items():
-                if token in prices and balance > 0:  # Проверяем что баланс положительный
+                if token in prices and balance > 0:
                     price = prices[token]
                     usd_value = balance * price
                     usd_values[token] = usd_value
-                    print(f"DEBUG: Подсчет для {token}: {balance} * ${price} = ${usd_value}")  # Для отладки
             
             return balances, usd_values
         except Exception as e:
@@ -210,7 +193,6 @@ class SolanaClient:
             # Получаем список токенов из Jupiter
             jupiter_tokens = self.token_list
 
-            # Запрос к Helius RPC для получения токенов
             url = "https://mainnet.helius-rpc.com/?api-key=12891d9f-e674-4ae8-b25e-23eab3a00621"
             payload = {
                 "jsonrpc": "2.0",
@@ -277,7 +259,6 @@ class SolanaClient:
         return balances
 
     def get_wallets_balances(self, wallet_addresses: List[str], batch_size: int = 50) -> Dict[str, Tuple[Dict[str, float], Dict[str, float]]]:
-        """Пакетная обработка кошельков"""
         results = {}
         
         with ThreadPoolExecutor(max_workers=10) as executor:
@@ -298,7 +279,7 @@ class SolanaClient:
         return results
 
 def main():
-    client = SolanaClient()
+    client = BalanceChecker()
     test_wallets = ["5cvQpjBpobuLEKf2myqpwrkcX4u1ct1XuEqmgcubAV7f"]
     
     results = client.get_wallets_balances(test_wallets)

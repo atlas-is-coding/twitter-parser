@@ -10,6 +10,10 @@ from config.config import TWITTER_BASE_HEADERS
 from services.twitter.models import TwitterSearchResponse, Tweet, User, TimelineEntry
 from utils.proxy_manager import ProxyManager
 from utils.headers_manager import HeadersManager
+from config.constants import (
+    MAX_RETRIES, REQUEST_TIMEOUT, TWITTER_SEARCH_PAGE_SIZE,
+    TWITTER_DELAY_BETWEEN_REQUESTS
+)
 
 logger = logging.getLogger('twitter_parser')
 console = Console()
@@ -24,7 +28,7 @@ class TwitterEngine:
             cast=[int, float]
         )
         self.retry_count = 0
-        self.max_retries = 5
+        self.max_retries = MAX_RETRIES
         self.console = Console()
 
     @staticmethod
@@ -97,6 +101,7 @@ class TwitterEngine:
         headers = self.headers_manager.get_headers()
         
         if not proxy_url or not headers:
+            logger.error(f"Не удалось получить прокси или заголовки для запроса. Proxy: {proxy_url}, Headers present: {bool(headers)}")
             return None
         
         proxies = {
@@ -105,6 +110,7 @@ class TwitterEngine:
         }
         
         try:
+            logger.debug(f"Отправка запроса к Twitter API для query: {query}")
             response = requests.get(
                 self.construct_search_url(query), 
                 headers=headers, 
@@ -113,11 +119,14 @@ class TwitterEngine:
             )
             
             if response.status_code == 429:
+                logger.warning(f"Достигнут лимит запросов (429). Попытка: {self.retry_count + 1}/{self.max_retries}")
                 if self.retry_count >= self.max_retries:
+                    logger.error("Превышено максимальное количество попыток после ошибки 429")
                     self.retry_count = 0
                     return None
                     
                 wait_time = 2 ** self.retry_count
+                logger.info(f"Ожидание {wait_time} секунд перед повторной попыткой")
                 time.sleep(wait_time)
                 self.retry_count += 1
                 return self.get_latest_posts(query)
@@ -126,6 +135,8 @@ class TwitterEngine:
             
             data = response.json()
             entries_data = data['data']['search_by_raw_query']['search_timeline']['timeline']['instructions'][0]['entries']
+            
+            logger.info(f"Получено {len(entries_data)} записей для query: {query}")
             
             timeline_entries = []
             for entry_data in entries_data:
@@ -150,7 +161,11 @@ class TwitterEngine:
             return TwitterSearchResponse(entries=timeline_entries)
             
         except RequestException as error:
+            logger.error(f"Ошибка запроса к Twitter API: {str(error)}", exc_info=True)
             self.proxy_manager.report_error(proxy_url)
+            return None
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при получении твитов: {str(e)}", exc_info=True)
             return None
 
 if __name__ == "__main__":
